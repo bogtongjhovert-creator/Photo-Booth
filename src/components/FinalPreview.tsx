@@ -76,6 +76,12 @@ export default function FinalPreview({
       sharingOrigin = 'https://ais-pre-2fwpniwqdw3q2peqbs3jv5-446615910495.asia-southeast1.run.app';
     }
 
+    // CRITICAL: Dev subdomain (ais-dev-) is protected and requires developer authentication.
+    // We automatically swap it with the public preview subdomain (ais-pre-) so QR scans work instantly on other devices.
+    if (sharingOrigin && sharingOrigin.includes('ais-dev-')) {
+      sharingOrigin = sharingOrigin.replace('ais-dev-', 'ais-pre-');
+    }
+
     // Upload photostrip base64 image data to the Express companion server
     fetch('/api/photostrips', {
       method: 'POST',
