@@ -326,4 +326,5 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoCleanup: false,
   privacyPolicy: 'We respect your privacy. Emails are collected solely for delivering your photostrips and will not be shared with third parties or used for unsolicited marketing.',
   termsOfUse: 'By using this photobooth, you agree to allow the event host to capture images for event gallery display. No commercial usage will occur without consent.',
+  customSharingUrl: '',
 };

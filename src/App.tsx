@@ -14,13 +14,27 @@ import CaptureWorkflow from './components/CaptureWorkflow';
 import PhotostripCanvas from './components/PhotostripCanvas';
 import FinalPreview from './components/FinalPreview';
 import AdminDashboard from './components/AdminDashboard';
-import { Sparkles, Heart } from 'lucide-react';
+import { Sparkles, Heart, Download, Loader2 } from 'lucide-react';
 
 export default function App() {
   const [view, setView] = useState<AppView>('welcome');
   const [frames, setFrames] = useState<EventFrame[]>([]);
-  const [events, setEvents] = useState<PhotoboothEvent[]>(DEFAULT_EVENTS);
-  const [activeEventId, setActiveEventId] = useState<string>(DEFAULT_EVENTS[0].id);
+  const [events, setEvents] = useState<PhotoboothEvent[]>(() => {
+    try {
+      const saved = localStorage.getItem('photobooth_events');
+      return saved ? JSON.parse(saved) : DEFAULT_EVENTS;
+    } catch {
+      return DEFAULT_EVENTS;
+    }
+  });
+  const [activeEventId, setActiveEventId] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem('photobooth_active_event_id');
+      return saved || DEFAULT_EVENTS[0].id;
+    } catch {
+      return DEFAULT_EVENTS[0].id;
+    }
+  });
 
   // Guest details state
   const [selectedFrameId, setSelectedFrameId] = useState<string>('');
@@ -30,12 +44,40 @@ export default function App() {
   const [photostripUrl, setPhotostripUrl] = useState<string>('');
 
   // Config parameters
-  const [emailConfig, setEmailConfig] = useState<EmailConfig>(DEFAULT_EMAIL_CONFIG);
-  const [printerConfig, setPrinterConfig] = useState<PrinterConfig>(DEFAULT_PRINTER_CONFIG);
-  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const [emailConfig, setEmailConfig] = useState<EmailConfig>(() => {
+    try {
+      const saved = localStorage.getItem('photobooth_email_config');
+      return saved ? JSON.parse(saved) : DEFAULT_EMAIL_CONFIG;
+    } catch {
+      return DEFAULT_EMAIL_CONFIG;
+    }
+  });
+  const [printerConfig, setPrinterConfig] = useState<PrinterConfig>(() => {
+    try {
+      const saved = localStorage.getItem('photobooth_printer_config');
+      return saved ? JSON.parse(saved) : DEFAULT_PRINTER_CONFIG;
+    } catch {
+      return DEFAULT_PRINTER_CONFIG;
+    }
+  });
+  const [settings, setSettings] = useState<AppSettings>(() => {
+    try {
+      const saved = localStorage.getItem('photobooth_settings');
+      return saved ? JSON.parse(saved) : DEFAULT_SETTINGS;
+    } catch {
+      return DEFAULT_SETTINGS;
+    }
+  });
 
   // Session records database
-  const [sessions, setSessions] = useState<Session[]>([]);
+  const [sessions, setSessions] = useState<Session[]>(() => {
+    try {
+      const saved = localStorage.getItem('photobooth_sessions');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
 
   // WebSocket Server Connection states
   const [wsSocket, setWsSocket] = useState<WebSocket | null>(null);
@@ -55,8 +97,43 @@ export default function App() {
     devMode: true,
   });
 
+  // Sync state changes to localStorage
+  useEffect(() => {
+    localStorage.setItem('photobooth_events', JSON.stringify(events));
+  }, [events]);
+
+  useEffect(() => {
+    localStorage.setItem('photobooth_active_event_id', activeEventId);
+  }, [activeEventId]);
+
+  useEffect(() => {
+    localStorage.setItem('photobooth_email_config', JSON.stringify(emailConfig));
+  }, [emailConfig]);
+
+  useEffect(() => {
+    localStorage.setItem('photobooth_printer_config', JSON.stringify(printerConfig));
+  }, [printerConfig]);
+
+  useEffect(() => {
+    localStorage.setItem('photobooth_settings', JSON.stringify(settings));
+  }, [settings]);
+
+  useEffect(() => {
+    localStorage.setItem('photobooth_sessions', JSON.stringify(sessions));
+  }, [sessions]);
+
   // 1. Hydrate frames with dynamic styled transparency overlays on load
   useEffect(() => {
+    const saved = localStorage.getItem('photobooth_frames');
+    if (saved) {
+      try {
+        setFrames(JSON.parse(saved));
+        return;
+      } catch (e) {
+        console.error('Failed to load saved frames:', e);
+      }
+    }
+
     const hydrated = DEFAULT_FRAMES.map((frame) => {
       let style: 'wedding' | 'birthday' | 'graduation' | 'corporate' | 'neon' = 'wedding';
       let orientation: 'portrait' | 'landscape' | 'square' = 'portrait';
@@ -79,6 +156,38 @@ export default function App() {
     });
 
     setFrames(hydrated);
+  }, []);
+
+  // Save customized frames to local storage when they change
+  useEffect(() => {
+    if (frames.length > 0) {
+      localStorage.setItem('photobooth_frames', JSON.stringify(frames));
+    }
+  }, [frames]);
+
+  // Query parameter detection state for scanning QR codes to download photostrip
+  const [downloadStripUrl, setDownloadStripUrl] = useState<string | null>(null);
+  const [isLoadingDownload, setIsLoadingDownload] = useState<boolean>(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const downloadId = params.get('download');
+    if (downloadId) {
+      setView('download-only');
+      setIsLoadingDownload(true);
+      fetch(`/api/photostrips/${downloadId}`)
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.image) {
+            setDownloadStripUrl(data.image);
+          }
+          setIsLoadingDownload(false);
+        })
+        .catch((err) => {
+          console.error('Failed to fetch scanned photostrip:', err);
+          setIsLoadingDownload(false);
+        });
+    }
   }, []);
 
   // 2. Align default selected frame with active event's frameId
@@ -252,6 +361,8 @@ export default function App() {
               onNewSession={handleNewSession}
               wsSocket={wsSocket}
               saveSession={handleSaveSessionRecord}
+              settings={settings}
+              emailConfig={emailConfig}
             />
           ) : (
             <div className="min-h-screen bg-slate-950 flex flex-col justify-center items-center p-6 select-none">
@@ -306,6 +417,49 @@ export default function App() {
           wsSocket={wsSocket}
           triggerReconnection={triggerReconnection}
         />
+      )}
+
+      {view === 'download-only' && (
+        <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-4 text-center select-none animate-fade-in" id="download-only-view">
+          <div className="w-full max-w-sm bg-slate-900/85 border border-white/10 backdrop-blur-xl rounded-3xl p-6 shadow-2xl">
+            <div className="relative flex items-center justify-center mb-4">
+              <Sparkles className="w-12 h-12 text-blue-400 animate-pulse" />
+            </div>
+
+            <h2 className="text-2xl font-black font-display text-white mb-1">Your Photostrip!</h2>
+            <p className="text-xs text-slate-400 mb-6">Long-press on the image below to save it to your phone, or tap Download.</p>
+
+            {isLoadingDownload ? (
+              <div className="h-96 flex flex-col items-center justify-center gap-3">
+                <Loader2 className="w-10 h-10 text-blue-500 animate-spin" />
+                <span className="text-xs text-slate-500 font-medium">Loading your memories...</span>
+              </div>
+            ) : downloadStripUrl ? (
+              <div className="flex flex-col items-center gap-6">
+                <div className="bg-white/5 border border-white/10 rounded-2xl p-2 shadow-inner max-w-[260px]">
+                  <img
+                    src={downloadStripUrl}
+                    alt="Your photostrip"
+                    className="max-h-[50vh] rounded-lg shadow-2xl object-contain mx-auto select-text touch-callout-default"
+                    referrerPolicy="no-referrer"
+                  />
+                </div>
+                <a
+                  href={downloadStripUrl}
+                  download={`photostrip_${Date.now()}.png`}
+                  className="w-full py-4 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white font-black text-xs uppercase tracking-widest rounded-xl flex items-center justify-center gap-2 shadow-lg active:scale-95 transition-all cursor-pointer"
+                >
+                  <Download className="w-4 h-4" /> Save to Device
+                </a>
+              </div>
+            ) : (
+              <div className="h-64 flex flex-col items-center justify-center gap-2">
+                <p className="text-sm font-bold text-rose-400">Photostrip Not Found</p>
+                <p className="text-xs text-slate-500">This download link may have expired or is incorrect.</p>
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );

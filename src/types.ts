@@ -86,6 +86,7 @@ export interface AppSettings {
   autoCleanup: boolean;
   privacyPolicy: string;
   termsOfUse: string;
+  customSharingUrl?: string;
 }
 
 export type AppView =
@@ -95,4 +96,5 @@ export type AppView =
   | 'capture'
   | 'preview'
   | 'thank-you'
-  | 'admin';
+  | 'admin'
+  | 'download-only';

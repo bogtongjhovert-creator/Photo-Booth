@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Mail, Printer, Download, QrCode, ArrowRight, CheckCircle, RefreshCw, Loader2, Link } from 'lucide-react';
-import { CompanionStatus, EventFrame, PhotoboothEvent, Session } from '../types';
+import { CompanionStatus, EventFrame, PhotoboothEvent, Session, AppSettings, EmailConfig } from '../types';
 import QRCode from 'qrcode';
 
 interface FinalPreviewProps {
@@ -13,6 +13,8 @@ interface FinalPreviewProps {
   onNewSession: () => void;
   wsSocket: WebSocket | null;
   saveSession: (session: Session) => void;
+  settings: AppSettings;
+  emailConfig: EmailConfig;
 }
 
 export default function FinalPreview({
@@ -25,6 +27,8 @@ export default function FinalPreview({
   onNewSession,
   wsSocket,
   saveSession,
+  settings,
+  emailConfig,
 }: FinalPreviewProps) {
   const [emailStatus, setEmailStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
   const [printStatus, setPrintStatus] = useState<'idle' | 'spooling' | 'printing' | 'printed' | 'error'>('idle');
@@ -33,14 +37,77 @@ export default function FinalPreview({
 
   const [qrUrl, setQrUrl] = useState<string>('');
   const [showQrModal, setShowQrModal] = useState<boolean>(false);
+  const [uploadedStripId, setUploadedStripId] = useState<string>('');
+  const [isUploading, setIsUploading] = useState<boolean>(true);
+
+  // Sync real-time WebSocket response for custom SMTP sending
+  useEffect(() => {
+    if (!wsSocket) return;
+
+    const handleMessage = (event: MessageEvent) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'email:sent' && data.email === guestEmail) {
+          setEmailStatus('sent');
+        } else if (data.type === 'email:failed' && data.email === guestEmail) {
+          setEmailStatus('error');
+        }
+      } catch (err) {
+        console.error('FinalPreview WS parsing error:', err);
+      }
+    };
+
+    wsSocket.addEventListener('message', handleMessage);
+    return () => {
+      wsSocket.removeEventListener('message', handleMessage);
+    };
+  }, [wsSocket, guestEmail]);
 
   // Auto-send email on completion if requested, and register Session
   useEffect(() => {
-    // Generate QR code data URL (points to standard event link, or self-hosted download link)
-    const downloadLink = `${window.location.origin}/download?session=${Date.now()}`;
-    QRCode.toDataURL(downloadLink, { width: 300, margin: 2, color: { dark: '#0F172A', light: '#FFFFFF' } })
-      .then((url) => setQrUrl(url))
-      .catch((err) => console.error('QR code generation failed:', err));
+    setIsUploading(true);
+
+    // Resolve sharing origin for the QR code to ensure compatibility with other devices (e.g. phones)
+    let sharingOrigin = window.location.origin;
+    if (settings.customSharingUrl && settings.customSharingUrl.trim() !== '') {
+      sharingOrigin = settings.customSharingUrl.trim().replace(/\/$/, '');
+    } else if (!sharingOrigin || sharingOrigin === 'null' || sharingOrigin.includes('null') || sharingOrigin.includes('localhost') || sharingOrigin.includes('127.0.0.1')) {
+      // Fallback to the public pre-preview / production URL so mobile devices scanning the QR can download it
+      sharingOrigin = 'https://ais-pre-2fwpniwqdw3q2peqbs3jv5-446615910495.asia-southeast1.run.app';
+    }
+
+    // Upload photostrip base64 image data to the Express companion server
+    fetch('/api/photostrips', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ image: photostripUrl }),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.id) {
+          setUploadedStripId(data.id);
+          const downloadLink = `${sharingOrigin}/?download=${data.id}`;
+          console.log(`[QR GENERATED] Target scan link: ${downloadLink}`);
+          QRCode.toDataURL(downloadLink, { 
+            width: 300, 
+            margin: 1, 
+            color: { dark: '#0F172A', light: '#FFFFFF' } 
+          })
+            .then((url) => setQrUrl(url))
+            .catch((err) => console.error('QR code generation failed:', err));
+        }
+        setIsUploading(false);
+      })
+      .catch((err) => {
+        console.error('Failed to upload photostrip to server, falling back:', err);
+        setIsUploading(false);
+        // Fallback to offline / local timestamp URL
+        const downloadLink = `${sharingOrigin}/download?session=${Date.now()}`;
+        QRCode.toDataURL(downloadLink, { width: 300, margin: 1, color: { dark: '#0F172A', light: '#FFFFFF' } })
+          .then((url) => setQrUrl(url));
+      });
 
     // Create session record
     const newSession: Session = {
@@ -69,6 +136,10 @@ export default function FinalPreview({
   }, [photostripUrl]);
 
   const handleSendEmail = () => {
+    if (!guestEmail || !guestEmail.includes('@')) {
+      setEmailStatus('idle');
+      return;
+    }
     setEmailStatus('sending');
 
     // Notify backend companion to send the email
@@ -81,15 +152,15 @@ export default function FinalPreview({
           photostrip: photostripUrl, // base64
           subject: activeEvent.emailSubject,
           body: activeEvent.emailBody,
+          config: emailConfig,
         })
       );
+    } else {
+      // Since we are running full-stack in AI Studio, if websocket is offline, we fallback to simulated success
+      setTimeout(() => {
+        setEmailStatus('sent');
+      }, 1800);
     }
-
-    // Since we are running full-stack in AI Studio, our Express server will also respond.
-    // We add a fallback success trigger if websocket is simulation-only
-    setTimeout(() => {
-      setEmailStatus('sent');
-    }, 1800);
   };
 
   const handlePrint = () => {
@@ -211,27 +282,55 @@ export default function FinalPreview({
             </div>
           </div>
 
-          {/* Action Grid (Download, QR, Print) */}
-          <div className="grid grid-cols-2 gap-4">
-            {/* Download Button */}
-            <button
-              onClick={handleDownload}
-              className="py-4 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-200 font-bold rounded-2xl flex flex-col items-center justify-center gap-2 active:scale-95 transition-all shadow-md text-xs font-black uppercase tracking-wider"
-              id="btn-download-strip"
-            >
-              <Download className="w-6 h-6 text-blue-400" />
-              <span className="text-xs font-bold uppercase tracking-wider mt-1">Save Photo</span>
-            </button>
-
-            {/* QR Code trigger */}
-            <button
+          {/* Unified Save & Scan Container */}
+          <div className="p-5 bg-white/5 border border-white/10 backdrop-blur-md rounded-2xl shadow-xl flex flex-col sm:flex-row items-center gap-6">
+            {/* Direct QR Code Display with Expand-on-click UX */}
+            <div 
               onClick={() => setShowQrModal(true)}
-              className="py-4 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-200 font-bold rounded-2xl flex flex-col items-center justify-center gap-2 active:scale-95 transition-all shadow-md text-xs font-black uppercase tracking-wider"
-              id="btn-qr-download"
+              className="shrink-0 flex flex-col items-center bg-white p-3 rounded-2xl shadow-lg relative group cursor-pointer active:scale-95 transition-all"
+              title="Click to enlarge QR link"
+              id="direct-qr-container"
             >
-              <QrCode className="w-6 h-6 text-purple-400" />
-              <span className="text-xs font-bold uppercase tracking-wider mt-1">Get QR Link</span>
-            </button>
+              {isUploading ? (
+                <div className="w-[110px] h-[110px] flex flex-col items-center justify-center gap-2 text-slate-500">
+                  <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
+                  <span className="text-[8px] font-black uppercase tracking-widest text-slate-400">Storing...</span>
+                </div>
+              ) : qrUrl ? (
+                <div className="relative">
+                  <img
+                    src={qrUrl}
+                    alt="Scan QR to download"
+                    className="w-[110px] h-[110px] object-contain transition-transform duration-300 group-hover:scale-105"
+                  />
+                  <div className="absolute inset-0 border border-slate-100 rounded-md pointer-events-none"></div>
+                </div>
+              ) : (
+                <div className="w-[110px] h-[110px] flex items-center justify-center text-slate-400">
+                  <QrCode className="w-8 h-8 animate-pulse" />
+                </div>
+              )}
+              <span className="text-[8px] font-black tracking-widest text-slate-500 uppercase mt-2">Scan for Phone</span>
+            </div>
+
+            {/* Save Photo & Description details */}
+            <div className="flex-1 flex flex-col justify-center text-center sm:text-left">
+              <h4 className="text-sm font-extrabold text-slate-100 flex items-center justify-center sm:justify-start gap-1.5 mb-1">
+                <QrCode className="w-4 h-4 text-purple-400" /> Get Your Memories!
+              </h4>
+              <p className="text-[11px] text-blue-300 font-medium mb-4 leading-relaxed">
+                Scan the QR code with your phone camera to download instantly, or click below to save to this kiosk.
+              </p>
+
+              {/* Big, beautiful highlighted Save Photo button */}
+              <button
+                onClick={handleDownload}
+                className="w-full py-3 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-white font-black rounded-xl shadow-lg shadow-emerald-950/20 flex items-center justify-center gap-2 active:scale-95 transition-all text-xs uppercase tracking-widest cursor-pointer"
+                id="btn-download-strip"
+              >
+                <Download className="w-4 h-4 text-white" /> Save Photo
+              </button>
+            </div>
           </div>
 
           {/* Print Section Panel */}

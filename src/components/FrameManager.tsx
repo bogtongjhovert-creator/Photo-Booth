@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { EventFrame, PhotoSlot } from '../types';
-import { Trash2, Plus, Edit, Save, Check, RefreshCw, X, Eye, HelpCircle, Layers, Move } from 'lucide-react';
+import { Trash2, Plus, Edit, Save, Check, RefreshCw, X, Eye, HelpCircle, Layers, Move, Upload } from 'lucide-react';
 import { generateMockFrameOverlay } from '../utils/assets';
 
 interface FrameManagerProps {
@@ -17,6 +17,48 @@ export default function FrameManager({ frames, onSaveFrames }: FrameManagerProps
   const [newFrameName, setNewFrameName] = useState('');
   const [newFrameCategory, setNewFrameCategory] = useState('Wedding');
   const [newFrameOrientation, setNewFrameOrientation] = useState<'portrait' | 'landscape' | 'square'>('portrait');
+  const [newFrameImageUrl, setNewFrameImageUrl] = useState<string>('');
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      processFile(file);
+    }
+  };
+
+  const processFile = (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      alert('Please upload an image file (PNG with transparency is highly recommended).');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        setNewFrameImageUrl(reader.result);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDraggingFile(true);
+  };
+
+  const handleDragLeave = () => {
+    setIsDraggingFile(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDraggingFile(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      processFile(file);
+    }
+  };
 
   // Drag state trackers
   const stageRef = useRef<HTMLDivElement>(null);
@@ -69,7 +111,7 @@ export default function FrameManager({ frames, onSaveFrames }: FrameManagerProps
       id: `frame-${Date.now()}`,
       name: newFrameName,
       category: newFrameCategory,
-      imageUrl: mockOverlay,
+      imageUrl: newFrameImageUrl || mockOverlay,
       slots: defaultSlots,
       active: true,
       isCustom: true,
@@ -77,6 +119,7 @@ export default function FrameManager({ frames, onSaveFrames }: FrameManagerProps
 
     onSaveFrames([newFrame, ...frames]);
     setNewFrameName('');
+    setNewFrameImageUrl('');
     handleEditFrame(newFrame); // Auto open in visual editor
   };
 
@@ -290,6 +333,58 @@ export default function FrameManager({ frames, onSaveFrames }: FrameManagerProps
                       className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-sm text-slate-200"
                     />
                   </div>
+
+                  <div className="mt-4 flex flex-col gap-2">
+                    <label className="text-xs text-slate-500">Overlay Image (PNG with transparency)</label>
+                    <div className="flex flex-col gap-2">
+                      {editingFrame.imageUrl && (
+                        <div className="relative w-full h-24 bg-slate-950 border border-slate-850 rounded-lg overflow-hidden flex items-center justify-center p-2 group">
+                          <img
+                            src={editingFrame.imageUrl}
+                            alt="Current overlay"
+                            className="max-w-full max-h-full object-contain opacity-75"
+                            referrerPolicy="no-referrer"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setEditingFrame({ ...editingFrame, imageUrl: '' })}
+                            className="absolute top-1.5 right-1.5 p-1 bg-red-600 hover:bg-red-500 text-white rounded-md opacity-0 group-hover:opacity-100 transition-opacity duration-200 shadow-lg cursor-pointer"
+                            title="Remove image"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      )}
+                      
+                      <div className="flex gap-2">
+                        <input
+                          type="file"
+                          accept="image/*"
+                          id="edit-frame-file-input"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              const reader = new FileReader();
+                              reader.onload = () => {
+                                if (typeof reader.result === 'string') {
+                                  setEditingFrame({ ...editingFrame, imageUrl: reader.result });
+                                }
+                              };
+                              reader.readAsDataURL(file);
+                            }
+                          }}
+                        />
+                        <label
+                          htmlFor="edit-frame-file-input"
+                          className="flex-1 py-2 bg-slate-800 hover:bg-slate-750 text-slate-300 border border-slate-700/60 rounded-xl text-center text-[10px] font-black uppercase tracking-wider cursor-pointer active:scale-95 transition-all flex items-center justify-center gap-1.5"
+                        >
+                          <Plus className="w-3.5 h-3.5 text-indigo-400" />
+                          {editingFrame.imageUrl ? 'Replace Overlay' : 'Upload PNG'}
+                        </label>
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
                 {selectedSlotId !== null && (
@@ -405,52 +500,120 @@ export default function FrameManager({ frames, onSaveFrames }: FrameManagerProps
           <Plus className="w-4 h-4 text-indigo-400" /> Design New Frame Overlay
         </h3>
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-          <div className="flex flex-col gap-2">
-            <label className="text-xs text-slate-400 font-semibold">Frame Name</label>
-            <input
-              type="text"
-              value={newFrameName}
-              onChange={(e) => setNewFrameName(e.target.value)}
-              placeholder="e.g. Elegant Floral Wedding"
-              className="px-3.5 py-2 bg-slate-950 border border-slate-850 rounded-xl text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500"
-            />
+        <div className="flex flex-col gap-5">
+          {/* Form Fields */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="flex flex-col gap-2">
+              <label className="text-xs text-slate-400 font-semibold">Frame Name</label>
+              <input
+                type="text"
+                value={newFrameName}
+                onChange={(e) => setNewFrameName(e.target.value)}
+                placeholder="e.g. Elegant Floral Wedding"
+                className="px-3.5 py-2.5 bg-slate-950 border border-slate-850 rounded-xl text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+              />
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <label className="text-xs text-slate-400 font-semibold">Category</label>
+              <select
+                value={newFrameCategory}
+                onChange={(e) => setNewFrameCategory(e.target.value)}
+                className="px-3 py-2.5 bg-slate-950 border border-slate-850 rounded-xl text-sm text-slate-200 focus:outline-none"
+              >
+                <option value="Wedding">Wedding</option>
+                <option value="Birthday">Birthday</option>
+                <option value="Graduation">Graduation</option>
+                <option value="Corporate">Corporate</option>
+                <option value="Modern">Modern</option>
+              </select>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <label className="text-xs text-slate-400 font-semibold">Strip Layout Style</label>
+              <select
+                value={newFrameOrientation}
+                onChange={(e) => setNewFrameOrientation(e.target.value as any)}
+                className="px-3 py-2.5 bg-slate-950 border border-slate-850 rounded-xl text-sm text-slate-200 focus:outline-none"
+              >
+                <option value="portrait">Traditional 2x6 Strip (Portrait)</option>
+                <option value="landscape">Classic 4x6 Grid (Landscape)</option>
+                <option value="square">Modern 2x2 Grid (Square)</option>
+              </select>
+            </div>
           </div>
 
+          {/* Drag & Drop Upload Zone */}
           <div className="flex flex-col gap-2">
-            <label className="text-xs text-slate-400 font-semibold">Category</label>
-            <select
-              value={newFrameCategory}
-              onChange={(e) => setNewFrameCategory(e.target.value)}
-              className="px-3 py-2 bg-slate-950 border border-slate-850 rounded-xl text-sm text-slate-200 focus:outline-none"
+            <label className="text-xs text-slate-400 font-semibold">Frame Overlay Image (Optional - PNG with transparency)</label>
+            
+            <div className="flex flex-col sm:flex-row gap-4 items-stretch">
+              {/* Dropzone */}
+              <div
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                onClick={() => fileInputRef.current?.click()}
+                className={`flex-1 border-2 border-dashed rounded-xl p-6 flex flex-col items-center justify-center gap-2 cursor-pointer transition-all ${
+                  isDraggingFile
+                    ? 'border-indigo-500 bg-indigo-500/10'
+                    : 'border-slate-800 bg-slate-950/40 hover:bg-slate-950/70 hover:border-slate-700'
+                }`}
+              >
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleFileChange}
+                  accept="image/*"
+                  className="hidden"
+                />
+                <Upload className="w-6 h-6 text-indigo-400 animate-pulse" />
+                <div className="text-center">
+                  <p className="text-xs font-bold text-slate-300">
+                    Drag & Drop PNG overlay or <span className="text-indigo-400 underline">browse files</span>
+                  </p>
+                  <p className="text-[10px] text-slate-500 mt-1">Supports PNG, JPG, JPEG (PNG recommended for transparency)</p>
+                </div>
+              </div>
+
+              {/* Preview Box if uploaded */}
+              {newFrameImageUrl && (
+                <div className="w-full sm:w-48 bg-slate-950 border border-slate-850 rounded-xl p-3 flex flex-col items-center justify-between gap-2.5 relative group">
+                  <span className="text-[10px] text-indigo-400 font-bold uppercase tracking-wider">Upload Preview</span>
+                  <div className="w-full h-24 bg-slate-900 rounded-lg overflow-hidden flex items-center justify-center p-1.5 border border-slate-800">
+                    <img
+                      src={newFrameImageUrl}
+                      alt="Uploaded overlay preview"
+                      className="max-w-full max-h-full object-contain"
+                      referrerPolicy="no-referrer"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setNewFrameImageUrl('');
+                    }}
+                    className="absolute top-2 right-2 p-1 bg-red-600 hover:bg-red-500 text-white rounded-md transition-colors cursor-pointer"
+                    title="Remove custom image"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                  <span className="text-[9px] text-slate-500 truncate w-full text-center">Custom Image Ready</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="flex justify-end pt-2 border-t border-slate-800/50">
+            <button
+              onClick={handleCreateFrame}
+              disabled={!newFrameName.trim()}
+              className="py-2.5 px-8 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-sm rounded-xl transition-all shadow-md flex items-center gap-2 cursor-pointer"
             >
-              <option value="Wedding">Wedding</option>
-              <option value="Birthday">Birthday</option>
-              <option value="Graduation">Graduation</option>
-              <option value="Corporate">Corporate</option>
-              <option value="Modern">Modern</option>
-            </select>
+              <Plus className="w-4 h-4" /> Create & Visual Layout Editor
+            </button>
           </div>
-
-          <div className="flex flex-col gap-2">
-            <label className="text-xs text-slate-400 font-semibold">Strip Layout Style</label>
-            <select
-              value={newFrameOrientation}
-              onChange={(e) => setNewFrameOrientation(e.target.value as any)}
-              className="px-3 py-2 bg-slate-950 border border-slate-850 rounded-xl text-sm text-slate-200 focus:outline-none"
-            >
-              <option value="portrait">Traditional 2x6 Strip (Portrait)</option>
-              <option value="landscape">Classic 4x6 Grid (Landscape)</option>
-              <option value="square">Modern 2x2 Grid (Square)</option>
-            </select>
-          </div>
-
-          <button
-            onClick={handleCreateFrame}
-            className="py-2 px-6 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm rounded-xl transition-all shadow-md"
-          >
-            Create & Edit
-          </button>
         </div>
       </div>
 

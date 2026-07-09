@@ -336,90 +336,33 @@ export default function CaptureWorkflow({
         </div>
       </div>
 
-      {/* Main Viewfinder / Review Stage with Exact Real-Time Frame Overlay Preview */}
-      <div className="w-full max-w-4xl mx-auto flex-1 flex flex-col justify-center items-center z-10 py-4">
-        {/* Responsive Frame Sync Wrapper */}
-        <div
-          className={`relative bg-black/40 rounded-3xl overflow-hidden border border-white/10 shadow-2xl flex items-center justify-center backdrop-blur-md transition-all duration-300 ${
-            selectedFrame.slots[0] && selectedFrame.slots[0].width < 90 && selectedFrame.slots[0].height < 25
-              ? 'aspect-[1/3] h-[65vh] max-h-[600px]'
-              : selectedFrame.slots[0] && selectedFrame.slots[0].width < 50 && selectedFrame.slots[0].height < 50
-              ? 'aspect-[3/2] w-full max-w-2xl'
-              : 'aspect-square h-[55vh] max-h-[550px]'
-          }`}
-          id="exact-capture-preview-wrapper"
-        >
-          {/* Slot Grid Behind the Frame Overlay */}
-          <div className="absolute inset-0 w-full h-full">
-            {selectedFrame.slots.map((slot, index) => {
-              const photoUrl = capturedPhotos[index];
-              const isActiveSlot = index === currentStep - 1;
-              const isCaptured = !!photoUrl;
-
-              return (
-                <div
-                  key={slot.id}
-                  className="absolute overflow-hidden bg-zinc-900/40 border border-white/5 flex items-center justify-center transition-all duration-300"
-                  style={{
-                    left: `${slot.x}%`,
-                    top: `${slot.y}%`,
-                    width: `${slot.width}%`,
-                    height: `${slot.height}%`,
-                  }}
-                  id={`slot-preview-${index}`}
-                >
-                  {/* Show captured image if it has already been captured, unless it is the active slot during capture states */}
-                  {isCaptured && (!isActiveSlot || workflowState === 'review') ? (
-                    <img
-                      src={photoUrl}
-                      alt={`Captured snapshot ${index + 1}`}
-                      className="w-full h-full object-cover animate-fade-in"
-                      referrerPolicy="no-referrer"
-                    />
-                  ) : (
-                    /* Show placeholder for uncaptured slots */
-                    <div className="flex flex-col items-center justify-center text-slate-600 gap-1 select-none animate-pulse">
-                      <Camera className="w-5 h-5 opacity-40" />
-                      <span className="text-[9px] font-black uppercase tracking-wider opacity-40">Slot {index + 1}</span>
-                    </div>
-                  )}
-
-                  {/* Highlight active viewfinder/review slots */}
-                  {isActiveSlot && workflowState !== 'review' && (
-                    <div className="absolute inset-0 border-2 border-blue-500 animate-pulse pointer-events-none z-10"></div>
-                  )}
-
-                  {/* Highlights newly taken photo with an emerald ripple */}
-                  {isActiveSlot && workflowState === 'review' && (
-                    <div className="absolute inset-0 border-2 border-emerald-400 pointer-events-none z-10 shadow-[inset_0_0_12px_rgba(52,211,153,0.5)] animate-pulse"></div>
-                  )}
-                </div>
-              );
-            })}
-
-            {/* PERSISTENT SINGLE VIEWPORT VIDEO FEED: Absolute-positioned precisely at the coordinates of the active slot */}
-            {selectedFrame.slots[currentStep - 1] && (
-              <div
-                className={`absolute overflow-hidden transition-all duration-300 ${
-                  workflowState === 'review' ? 'opacity-0 pointer-events-none z-0' : 'opacity-100 z-20'
-                }`}
-                style={{
-                  left: `${selectedFrame.slots[currentStep - 1].x}%`,
-                  top: `${selectedFrame.slots[currentStep - 1].y}%`,
-                  width: `${selectedFrame.slots[currentStep - 1].width}%`,
-                  height: `${selectedFrame.slots[currentStep - 1].height}%`,
-                }}
-                id="active-viewport-container"
-              >
+      {/* Split-Screen Main Workspace: Large Viewfinder (Left) + Real-Time Photostrip Preview (Right) */}
+      <div className="w-full max-w-6xl mx-auto flex-1 flex flex-col lg:flex-row gap-8 items-center justify-center z-10 py-2">
+        
+        {/* LEFT COLUMN: Large High-Resolution Viewfinder / Review Stage */}
+        <div className="flex-1 w-full flex flex-col justify-center items-center">
+          <div 
+            className="relative w-full aspect-[4/3] sm:aspect-video bg-slate-900/80 rounded-3xl overflow-hidden border border-white/10 shadow-2xl flex items-center justify-center backdrop-blur-md" 
+            id="main-viewfinder-card"
+          >
+            {/* Live Camera Viewport (Active capture states) */}
+            {workflowState !== 'review' ? (
+              <div className="relative w-full h-full">
                 <video
-                  ref={videoRef}
+                  ref={(el) => {
+                    // Sync primary viewfinder video element to stream ref
+                    (videoRef as any).current = el;
+                    if (el && streamRef.current && el.srcObject !== streamRef.current) {
+                      el.srcObject = streamRef.current;
+                    }
+                  }}
                   autoPlay
                   playsInline
                   className="w-full h-full object-cover scale-x-[-1]"
-                ></video>
-
-                {/* Sub-grid lines for active framing */}
-                <div className="absolute inset-0 grid grid-cols-3 grid-rows-3 pointer-events-none opacity-20 z-10">
+                />
+                
+                {/* Rule of thirds grid overlay for alignment */}
+                <div className="absolute inset-0 grid grid-cols-3 grid-rows-3 pointer-events-none opacity-20">
                   <div className="border-r border-b border-white"></div>
                   <div className="border-r border-b border-white"></div>
                   <div className="border-b border-white"></div>
@@ -431,48 +374,149 @@ export default function CaptureWorkflow({
                   <div></div>
                 </div>
 
-                {/* Shutter capture flash effect */}
+                {/* Local camera capture flash */}
                 {workflowState === 'shutter' && (
-                  <div className="absolute inset-0 bg-white/95 animate-flash pointer-events-none z-30"></div>
+                  <div className="absolute inset-0 bg-white animate-flash pointer-events-none z-30"></div>
                 )}
+              </div>
+            ) : (
+              /* Review Captured Photo Mode - LARGE and CRYSTAL CLEAR preview */
+              capturedPhotos[currentStep - 1] && (
+                <div className="relative w-full h-full flex items-center justify-center bg-black/60">
+                  <img
+                    src={capturedPhotos[currentStep - 1]}
+                    alt={`Captured snapshot ${currentStep} preview`}
+                    className="w-full h-full object-cover animate-fade-in"
+                    referrerPolicy="no-referrer"
+                    id="large-photo-review"
+                  />
+
+                  {/* Top-left review state badge */}
+                  <div className="absolute top-4 left-4 px-3 py-2 bg-black/75 backdrop-blur-md rounded-xl text-xs font-bold border border-white/10 flex items-center gap-1.5 z-20">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse animate-duration-1000"></span>
+                    <span className="text-white font-extrabold uppercase tracking-wide text-[10px]">Review Capture #{currentStep}</span>
+                  </div>
+                </div>
+              )
+            )}
+
+            {/* Big Countdown Numbers HUD Overlay */}
+            {workflowState === 'countdown' && (
+              <div className="absolute inset-0 bg-black/35 backdrop-blur-[1px] flex items-center justify-center z-30 pointer-events-none">
+                <div className="text-center animate-pulse">
+                  <div className="text-8xl sm:text-9xl font-black font-display text-white drop-shadow-[0_4px_12px_rgba(0,0,0,0.8)] leading-none select-none">
+                    {countdown}
+                  </div>
+                  <p className="text-[10px] sm:text-xs font-black uppercase tracking-[0.3em] text-blue-300 mt-4 select-none drop-shadow-md">
+                    Get Ready!
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Processing Camera Overlay */}
+            {workflowState === 'shutter' && (
+              <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-30">
+                <div className="text-center">
+                  <Camera className="w-10 h-10 mx-auto text-blue-400 animate-spin" />
+                  <p className="text-xs font-bold text-white mt-3 uppercase tracking-widest px-4">Processing Capture...</p>
+                </div>
               </div>
             )}
           </div>
-
-          {/* Elegant Transparent Border/Background Frame Overlay (On top of everything) */}
-          {selectedFrame.imageUrl && (
-            <img
-              src={selectedFrame.imageUrl}
-              alt="Decorative overlay frame template"
-              className="absolute inset-0 w-full h-full object-fill pointer-events-none z-10"
-              referrerPolicy="no-referrer"
-            />
-          )}
-
-          {/* Countdown Numbers HUD Overlay */}
-          {workflowState === 'countdown' && (
-            <div className="absolute inset-0 bg-black/35 backdrop-blur-[1px] flex items-center justify-center z-30 pointer-events-none">
-              <div className="text-center animate-pulse">
-                <div className="text-8xl sm:text-9xl font-black font-display text-white drop-shadow-[0_4px_12px_rgba(0,0,0,0.8)] leading-none select-none">
-                  {countdown}
-                </div>
-                <p className="text-[10px] sm:text-xs font-black uppercase tracking-[0.3em] text-blue-300 mt-4 select-none drop-shadow-md">
-                  Get Ready!
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* DSLR/Webcam Raw Capture Status Overlay */}
-          {workflowState === 'shutter' && (
-            <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-30">
-              <div className="text-center">
-                <Camera className="w-10 h-10 mx-auto text-blue-400 animate-spin" />
-                <p className="text-xs font-bold text-white mt-3 uppercase tracking-widest px-4">Processing Capture...</p>
-              </div>
-            </div>
-          )}
         </div>
+
+        {/* RIGHT COLUMN: Interactive Real-Time Photostrip Preview */}
+        <div className="w-full lg:w-[320px] xl:w-[340px] flex flex-col items-center justify-center shrink-0">
+          <span className="text-[10px] font-black tracking-widest text-slate-400 uppercase mb-3 block text-center">
+            Live Photostrip Design Preview
+          </span>
+
+          {/* Precise Frame Dimension / Aspect Wrapper */}
+          <div
+            className={`relative bg-black/50 rounded-2xl overflow-hidden border border-white/10 shadow-2xl flex items-center justify-center backdrop-blur-md transition-all duration-300 ${
+              selectedFrame.slots[0] && selectedFrame.slots[0].width < 90 && selectedFrame.slots[0].height < 25
+                ? 'aspect-[1/3] h-[55vh] max-h-[480px]'
+                : selectedFrame.slots[0] && selectedFrame.slots[0].width < 50 && selectedFrame.slots[0].height < 50
+                ? 'aspect-[3/2] w-full max-w-sm'
+                : 'aspect-square h-[45vh] max-h-[380px]'
+            }`}
+            id="exact-capture-preview-wrapper"
+          >
+            {/* Slot Grid Behind the Frame Overlay */}
+            <div className="absolute inset-0 w-full h-full">
+              {selectedFrame.slots.map((slot, index) => {
+                const photoUrl = capturedPhotos[index];
+                const isActiveSlot = index === currentStep - 1;
+                const isCaptured = !!photoUrl;
+
+                return (
+                  <div
+                    key={slot.id}
+                    className="absolute overflow-hidden bg-zinc-950/60 border border-white/5 flex items-center justify-center transition-all duration-300"
+                    style={{
+                      left: `${slot.x}%`,
+                      top: `${slot.y}%`,
+                      width: `${slot.width}%`,
+                      height: `${slot.height}%`,
+                    }}
+                    id={`slot-preview-${index}`}
+                  >
+                    {/* Render logic depending on status */}
+                    {isCaptured && (!isActiveSlot || workflowState === 'review') ? (
+                      /* Display the captured photo inside the slot */
+                      <img
+                        src={photoUrl}
+                        alt={`Captured snapshot ${index + 1}`}
+                        className="w-full h-full object-cover animate-fade-in"
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : isActiveSlot && workflowState !== 'review' ? (
+                      /* Active taking state: Display real-time stream direct-mapping inside the photo slot on the strip! */
+                      <div className="relative w-full h-full">
+                        <video
+                          ref={(el) => {
+                            // Secondary live strip video feed binding
+                            if (el && streamRef.current && el.srcObject !== streamRef.current) {
+                              el.srcObject = streamRef.current;
+                            }
+                          }}
+                          autoPlay
+                          playsInline
+                          className="w-full h-full object-cover scale-x-[-1]"
+                        />
+                        {/* Active Slot HUD Highlight */}
+                        <div className="absolute inset-0 border-2 border-blue-500 animate-pulse pointer-events-none z-10"></div>
+                      </div>
+                    ) : (
+                      /* Empty slot placeholder */
+                      <div className="flex flex-col items-center justify-center text-slate-700 gap-1 select-none animate-pulse">
+                        <Camera className="w-4 h-4 opacity-30" />
+                        <span className="text-[8px] font-bold uppercase tracking-wider opacity-30">Slot {index + 1}</span>
+                      </div>
+                    )}
+
+                    {/* Emerald active-review border for newly captured snapshot on the strip */}
+                    {isActiveSlot && workflowState === 'review' && (
+                      <div className="absolute inset-0 border-2 border-emerald-400 pointer-events-none z-10 shadow-[inset_0_0_12px_rgba(52,211,153,0.5)] animate-pulse"></div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Frame Template Design Overlay */}
+            {selectedFrame.imageUrl && (
+              <img
+                src={selectedFrame.imageUrl}
+                alt="Template design frame overlay"
+                className="absolute inset-0 w-full h-full object-fill pointer-events-none z-10"
+                referrerPolicy="no-referrer"
+              />
+            )}
+          </div>
+        </div>
+
       </div>
 
       {/* Bottom Control Actions */}

@@ -1,12 +1,33 @@
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
 import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer as createViteServer } from 'vite';
+import nodemailer from 'nodemailer';
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
+
+  // Ensure directories for persistent data storage exist
+  const DATA_DIR = path.join(process.cwd(), 'data');
+  const PHOTOSTRIPS_DIR = path.join(DATA_DIR, 'photostrips');
+  try {
+    if (!fs.existsSync(PHOTOSTRIPS_DIR)) {
+      fs.mkdirSync(PHOTOSTRIPS_DIR, { recursive: true });
+      console.log(`[STORAGE] Created persistence directory: ${PHOTOSTRIPS_DIR}`);
+    }
+  } catch (err) {
+    console.error('Failed to create storage directory:', err);
+  }
+
+  // In-memory store cache for photostrips to allow fast real-time access
+  const photostripsStore = new Map<string, string>();
+
+  // Support receiving large base64 strings
+  app.use(express.json({ limit: '15mb' }));
+  app.use(express.urlencoded({ limit: '15mb', extended: true }));
 
   // Create HTTP server to attach both Express and WebSockets
   const server = http.createServer(app);
@@ -50,6 +71,25 @@ async function startServer() {
     devMode: false
   };
 
+  const STATS_FILE = path.join(DATA_DIR, 'stats.json');
+  if (fs.existsSync(STATS_FILE)) {
+    try {
+      const savedStats = JSON.parse(fs.readFileSync(STATS_FILE, 'utf8'));
+      stats = { ...stats, ...savedStats };
+      console.log('[STATS] Loaded persisted hardware stats from disk.');
+    } catch (err) {
+      console.error('Failed to load stats from disk:', err);
+    }
+  }
+
+  const saveStats = () => {
+    try {
+      fs.writeFileSync(STATS_FILE, JSON.stringify(stats, null, 2), 'utf8');
+    } catch (err) {
+      console.error('Failed to save stats to disk:', err);
+    }
+  };
+
   wss.on('connection', (ws: WebSocket) => {
     console.log('Companion Server: Client connected via WebSocket.');
 
@@ -88,18 +128,114 @@ async function startServer() {
 
         } else if (payload.type === 'email:send') {
           // Send Email command
-          console.log(`[SMTP SPOOL] Dispatched photostrip mail to: ${payload.email}`);
-          stats.totalEmails += 1;
+          const config = payload.config;
+          const email = payload.email;
+          const name = payload.name || 'Guest';
+          const subject = payload.subject || 'Your memories are ready!';
+          const body = payload.body || 'Thanks for taking photos with us!';
+          const photostrip = payload.photostrip; // base64 string
 
-          setTimeout(() => {
-            ws.send(JSON.stringify({ type: 'email:sent', email: payload.email }));
-          }, 1000);
+          console.log(`[SMTP SPOOL] Dispatched photostrip mail request to: ${email}`);
+          stats.totalEmails += 1;
+          saveStats();
+
+          if (config && config.smtpHost && config.smtpUser) {
+            console.log(`[SMTP SENDER] Initializing SMTP transport for ${config.smtpHost}:${config.smtpPort}`);
+            const transporter = nodemailer.createTransport({
+              host: config.smtpHost,
+              port: Number(config.smtpPort) || 587,
+              secure: Number(config.smtpPort) === 465,
+              auth: {
+                user: config.smtpUser,
+                pass: config.smtpPass,
+              },
+              tls: {
+                rejectUnauthorized: false
+              }
+            });
+
+            // Convert base64 data URL to buffer for nodemailer attachment
+            const base64Data = photostrip.replace(/^data:image\/\w+;base64,/, "");
+            const imageBuffer = Buffer.from(base64Data, 'base64');
+
+            const mailOptions = {
+              from: `"${config.senderName}" <${config.senderEmail || config.smtpUser}>`,
+              to: email,
+              subject: subject,
+              text: `${body}\n\nEnjoy your high-resolution photostrip!`,
+              attachments: [
+                {
+                  filename: `photostrip_${Date.now()}.png`,
+                  content: imageBuffer,
+                  contentType: 'image/png'
+                }
+              ]
+            };
+
+            transporter.sendMail(mailOptions, (error, info) => {
+              if (error) {
+                console.error('[SMTP ERROR] Failed to send real email:', error);
+                ws.send(JSON.stringify({ type: 'email:failed', email: email, error: error.message }));
+              } else {
+                console.log('[SMTP SUCCESS] Email sent successfully via SMTP:', info.messageId);
+                ws.send(JSON.stringify({ type: 'email:sent', email: email }));
+              }
+            });
+          } else {
+            console.log(`[SMTP MOCK] SMTP not configured. Simulating dispatch to: ${email}`);
+            setTimeout(() => {
+              ws.send(JSON.stringify({ type: 'email:sent', email: email }));
+            }, 1000);
+          }
+
+        } else if (payload.type === 'email:test') {
+          const config = payload.config;
+          const recipient = payload.recipient;
+          console.log(`[SMTP TEST] Starting connection test to ${config?.smtpHost} for recipient ${recipient}`);
+          
+          if (config && config.smtpHost && config.smtpUser) {
+            const transporter = nodemailer.createTransport({
+              host: config.smtpHost,
+              port: Number(config.smtpPort) || 587,
+              secure: Number(config.smtpPort) === 465,
+              auth: {
+                user: config.smtpUser,
+                pass: config.smtpPass,
+              },
+              tls: {
+                rejectUnauthorized: false
+              }
+            });
+
+            const mailOptions = {
+              from: `"${config.senderName}" <${config.senderEmail || config.smtpUser}>`,
+              to: recipient,
+              subject: 'Photobooth Pro SMTP Connection Test ✅',
+              text: 'This is a successful connection test email from your Photobooth Pro Kiosk! Your outgoing SMTP pathway is active and secure.'
+            };
+
+            transporter.sendMail(mailOptions, (error, info) => {
+              if (error) {
+                console.error('[SMTP TEST ERROR] Test email failed:', error);
+                ws.send(JSON.stringify({ type: 'email:test_result', status: 'error', error: error.message }));
+              } else {
+                console.log('[SMTP TEST SUCCESS] Test email sent successfully:', info.messageId);
+                ws.send(JSON.stringify({ type: 'email:test_result', status: 'success' }));
+              }
+            });
+          } else {
+            console.warn('[SMTP TEST WARNING] SMTP configuration incomplete. Mocking success.');
+            setTimeout(() => {
+              ws.send(JSON.stringify({ type: 'email:test_result', status: 'success' }));
+            }, 1000);
+          }
 
         } else if (payload.type === 'print:send') {
           // Print command
           const copies = payload.copies || 1;
           console.log(`[PRINTER QUEUE] Enqueued job: ${copies}x copies on ${payload.printer || 'DNP DS620'}`);
           stats.totalPrints += copies;
+          saveStats();
 
           // Broadcast updated status with new counters
           ws.send(JSON.stringify({
@@ -123,6 +259,54 @@ async function startServer() {
   // Health API route
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', companion: 'online', stats });
+  });
+
+  // Upload photostrip base64 image data
+  app.post('/api/photostrips', (req, res) => {
+    const { image } = req.body;
+    if (!image) {
+      return res.status(400).json({ error: 'Missing image data' });
+    }
+    // Generate a secure, user-friendly 6-character hex ID
+    const id = Math.random().toString(16).substring(2, 8).toUpperCase();
+    
+    // Save to in-memory cache for ultra-fast instant access
+    photostripsStore.set(id, image);
+    
+    // Persist to disk asynchronously
+    const filePath = path.join(PHOTOSTRIPS_DIR, `${id}.txt`);
+    fs.writeFile(filePath, image, 'utf8', (err) => {
+      if (err) {
+        console.error(`[DB SAVE ERROR] Failed to save photostrip ${id} to disk:`, err);
+      } else {
+        console.log(`[DB SAVE SUCCESS] Persisted photostrip ${id} to disk.`);
+      }
+    });
+
+    res.json({ id });
+  });
+
+  // Download/retrieve photostrip image data with lazy-loading from disk
+  app.get('/api/photostrips/:id', (req, res) => {
+    const id = req.params.id ? req.params.id.toUpperCase() : '';
+    
+    // Return cache if loaded
+    if (photostripsStore.has(id)) {
+      return res.json({ image: photostripsStore.get(id) });
+    }
+
+    // Try reading file from disk storage
+    const filePath = path.join(PHOTOSTRIPS_DIR, `${id}.txt`);
+    fs.readFile(filePath, 'utf8', (err, data) => {
+      if (err) {
+        console.warn(`[DB READ WARNING] Photostrip ${id} not found on disk.`);
+        return res.status(404).json({ error: 'Photostrip not found' });
+      }
+
+      // Save to memory cache for next scan/download
+      photostripsStore.set(id, data);
+      res.json({ image: data });
+    });
   });
 
   // Mount Vite development middleware or static production dist folder

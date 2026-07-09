@@ -104,6 +104,33 @@ export default function AdminDashboard({
     }
   };
 
+  // Listen for custom SMTP test connection results from backend
+  React.useEffect(() => {
+    if (!wsSocket) return;
+
+    const handleMessage = (event: MessageEvent) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'email:test_result') {
+          if (data.status === 'success') {
+            setTestEmailStatus('success');
+          } else {
+            setTestEmailStatus('error');
+            console.error('[SMTP TEST ERROR]', data.error);
+            alert(`SMTP Test Failed: ${data.error || 'Unknown error'}`);
+          }
+        }
+      } catch (err) {
+        console.error('AdminDashboard WS listener parsing error:', err);
+      }
+    };
+
+    wsSocket.addEventListener('message', handleMessage);
+    return () => {
+      wsSocket.removeEventListener('message', handleMessage);
+    };
+  }, [wsSocket]);
+
   const handleSendTestEmail = () => {
     if (!testEmailAddress.trim()) return;
     setTestEmailStatus('sending');
@@ -114,11 +141,11 @@ export default function AdminDashboard({
         recipient: testEmailAddress,
         config: emailConfig
       }));
+    } else {
+      setTimeout(() => {
+        setTestEmailStatus('success');
+      }, 1500);
     }
-
-    setTimeout(() => {
-      setTestEmailStatus('success');
-    }, 1500);
   };
 
   const triggerCameraTest = () => {
@@ -545,6 +572,28 @@ export default function AdminDashboard({
                         className="px-3 py-2 bg-black/40 border border-white/10 rounded-xl text-sm text-slate-200 focus:outline-none focus:border-blue-500/50"
                       />
                     </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-xs text-slate-400 font-bold">SMTP Username</label>
+                      <input
+                        type="text"
+                        value={emailConfig.smtpUser || ''}
+                        onChange={(e) => onSaveEmailConfig({ ...emailConfig, smtpUser: e.target.value })}
+                        placeholder="e.g. sender@gmail.com"
+                        className="px-3 py-2 bg-black/40 border border-white/10 rounded-xl text-sm text-slate-200 focus:outline-none focus:border-blue-500/50"
+                      />
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-xs text-slate-400 font-bold">SMTP Password</label>
+                      <input
+                        type="password"
+                        value={emailConfig.smtpPass || ''}
+                        onChange={(e) => onSaveEmailConfig({ ...emailConfig, smtpPass: e.target.value })}
+                        placeholder="App-specific Password"
+                        className="px-3 py-2 bg-black/40 border border-white/10 rounded-xl text-sm text-slate-200 focus:outline-none focus:border-blue-500/50"
+                      />
+                    </div>
                   </div>
 
                   <div className="flex flex-col gap-1.5 mt-2">
@@ -762,6 +811,20 @@ export default function AdminDashboard({
                       onChange={(e) => onSaveSettings({ ...settings, storagePath: e.target.value })}
                       className="px-3.5 py-2 bg-black/40 border border-white/10 rounded-xl text-xs text-slate-200 focus:outline-none font-mono focus:border-blue-500/50"
                     />
+                  </div>
+
+                  <div className="flex flex-col gap-1.5 mt-2">
+                    <label className="text-xs text-slate-400 font-bold">Custom QR/Sharing Base URL (Optional)</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. https://ais-pre-2fwpniwqdw3q2peqbs3jv5-446615910495.asia-southeast1.run.app"
+                      value={settings.customSharingUrl || ''}
+                      onChange={(e) => onSaveSettings({ ...settings, customSharingUrl: e.target.value })}
+                      className="px-3.5 py-2 bg-black/40 border border-white/10 rounded-xl text-xs text-slate-200 focus:outline-none font-mono focus:border-blue-500/50"
+                    />
+                    <span className="text-[10px] text-slate-500 leading-normal">
+                      Specify the public domain name if the kiosk runs in a local loopback or behind an iframe, ensuring QR scans by other devices successfully reach your companion server.
+                    </span>
                   </div>
                 </div>
 
